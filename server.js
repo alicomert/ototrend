@@ -280,6 +280,31 @@ function serveStaticFile(res, filePath) {
   });
 }
 
+function resolveRequestPath(requestPath) {
+  const rawPath = requestPath || '/';
+  let pathname;
+  try {
+    pathname = decodeURIComponent(rawPath);
+  } catch (err) {
+    return { type: 'error', status: 400, message: 'Bad Request' };
+  }
+
+  const sanitized = path.normalize(pathname).replace(/^(\.{2}[\/])+/g, '');
+  let targetPath = path.join(PUBLIC_DIR, sanitized);
+
+  if (pathname === '/' || path.extname(sanitized) === '') {
+    targetPath = path.join(PUBLIC_DIR, 'index.html');
+  }
+
+  const resolvedPath = path.resolve(targetPath);
+
+  if (!resolvedPath.startsWith(PUBLIC_DIR)) {
+    return { type: 'error', status: 403, message: 'Forbidden' };
+  }
+
+  return { type: 'file', path: resolvedPath };
+}
+
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url, true);
 
@@ -293,23 +318,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const pathname = decodeURIComponent(parsedUrl.pathname || '/');
-  const sanitizedPath = path.normalize(pathname).replace(/^(\.{2}[\/])+/g, '');
-  let targetPath = path.join(PUBLIC_DIR, sanitizedPath);
+  const resolved = resolveRequestPath(parsedUrl.pathname);
 
-  if (pathname === '/' || path.extname(sanitizedPath) === '') {
-    targetPath = path.join(PUBLIC_DIR, 'index.html');
-  }
-
-  const resolvedPath = path.resolve(targetPath);
-
-  if (!resolvedPath.startsWith(PUBLIC_DIR)) {
-    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Forbidden');
+  if (!resolved || resolved.type === 'error') {
+    const status = resolved?.status || 404;
+    const message = resolved?.message || 'Not Found';
+    res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(message);
     return;
   }
 
-  serveStaticFile(res, resolvedPath);
+  serveStaticFile(res, resolved.path);
 });
 
 server.listen(PORT, () => {
