@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OtoTrend - Binance Trend Çizici</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  </head>
+  <body>
+    <header class="header">
+      <h1>OtoTrend</h1>
+      <p>Binance canlı verisi ile otomatik trend çizgisi</p>
+    </header>
+
+    <main class="container">
+      <section class="controls">
+        <form id="query-form" class="controls__form">
+          <div class="field">
+            <label for="symbol-input">Coin</label>
+            <input
+              id="symbol-input"
+              name="symbol"
+              type="text"
+              list="symbol-suggestions"
+              placeholder="örn. BTCUSDT"
+              autocomplete="off"
+              value="BTCUSDT"
+              required
+            />
+            <datalist id="symbol-suggestions"></datalist>
+            <small class="field__hint">USDT pariteleri için arama yapabilirsiniz.</small>
+          </div>
+
+          <div class="field">
+            <label for="timeframe-select">Timeframe</label>
+            <select id="timeframe-select" name="interval">
+              <option value="1m">1 Dakika</option>
+              <option value="5m">5 Dakika</option>
+              <option value="15m">15 Dakika</option>
+              <option value="1h" selected>1 Saat</option>
+              <option value="4h">4 Saat</option>
+              <option value="1d">1 Gün</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="limit-input">Mum Sayısı</label>
+            <input
+              id="limit-input"
+              name="limit"
+              type="number"
+              min="30"
+              max="500"
+              value="150"
+            />
+          </div>
+
+          <button type="submit" class="button">Grafiği Göster</button>
+        </form>
+
+        <div class="status" id="status"></div>
+      </section>
+
+      <section class="chart-section">
+        <div id="chart"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Veriler Binance API üzerinden anlık olarak çekilmektedir. Grafik ApexCharts
+        kütüphanesi ile oluşturulmuştur.
+      </p>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
