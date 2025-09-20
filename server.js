@@ -10,6 +10,9 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 let symbolsCache = [];
 let lastSymbolsFetch = 0;
 const SYMBOL_CACHE_TTL = 1000 * 60 * 15; // 15 minutes
+const PIVOT_WINDOW = 5;
+const LINE_TOLERANCE = 1e-6;
+
 
 function fetchJson(apiUrl) {
   return new Promise((resolve, reject) => {
@@ -56,6 +59,136 @@ async function getSymbols() {
   return symbolsCache;
 }
 
+function findPivotPoints(candles, window) {
+  const pivotHighs = [];
+  const pivotLows = [];
+  for (let i = window; i < candles.length - window; i += 1) {
+    const current = candles[i];
+    let isPivotHigh = true;
+    let isPivotLow = true;
+    for (let j = i - window; j <= i + window; j += 1) {
+      if (j === i) {
+        continue;
+      }
+      if (candles[j].high >= current.high) {
+        isPivotHigh = false;
+      }
+      if (candles[j].low <= current.low) {
+        isPivotLow = false;
+      }
+      if (!isPivotHigh && !isPivotLow) {
+        break;
+      }
+    }
+    if (isPivotHigh) {
+      pivotHighs.push({ index: i, price: current.high, time: current.time });
+    }
+    if (isPivotLow) {
+      pivotLows.push({ index: i, price: current.low, time: current.time });
+    }
+  }
+  return { pivotHighs, pivotLows };
+}
+
+function evaluateTrendLine(candles, pivotA, pivotB, type) {
+  const indexDiff = pivotB.index - pivotA.index;
+  if (indexDiff === 0) {
+    return null;
+  }
+  const slope = (pivotB.price - pivotA.price) / indexDiff;
+  const pivotTolerance = LINE_TOLERANCE * 10;
+  let touches = 0;
+  for (let idx = pivotA.index; idx < candles.length; idx += 1) {
+    const expected = pivotA.price + slope * (idx - pivotA.index);
+    if (type === 'support') {
+      if (expected > candles[idx].low + LINE_TOLERANCE) {
+        return null;
+      }
+      if (Math.abs(candles[idx].low - expected) <= pivotTolerance) {
+        touches += 1;
+      }
+    } else {
+      if (expected < candles[idx].high - LINE_TOLERANCE) {
+        return null;
+      }
+      if (Math.abs(candles[idx].high - expected) <= pivotTolerance) {
+        touches += 1;
+      }
+    }
+  }
+  if (touches < 2) {
+    return null;
+  }
+  const lastIndex = candles.length - 1;
+  const endValue = pivotA.price + slope * (lastIndex - pivotA.index);
+  const points = [
+    { x: candles[pivotA.index].time, y: Number(pivotA.price.toFixed(6)) },
+    { x: candles[pivotB.index].time, y: Number(pivotB.price.toFixed(6)) },
+  ];
+  if (pivotB.index < lastIndex) {
+    points.push({ x: candles[lastIndex].time, y: Number(endValue.toFixed(6)) });
+  }
+  return {
+    type,
+    touches,
+    pivotA,
+    pivotB,
+    points,
+  };
+}
+
+function findBestTrendLine(candles) {
+  if (candles.length < PIVOT_WINDOW * 2 + 2) {
+    return [];
+  }
+  const { pivotHighs, pivotLows } = findPivotPoints(candles, PIVOT_WINDOW);
+
+  function searchBest(pivots, type) {
+    let best = null;
+    for (let i = pivots.length - 1; i >= 1; i -= 1) {
+      for (let j = i - 1; j >= 0; j -= 1) {
+        const candidate = evaluateTrendLine(candles, pivots[j], pivots[i], type);
+        if (!candidate) {
+          continue;
+        }
+        if (!best) {
+          best = candidate;
+          continue;
+        }
+        if (candidate.touches > best.touches) {
+          best = candidate;
+          continue;
+        }
+        if (candidate.pivotB.index > best.pivotB.index) {
+          best = candidate;
+          continue;
+        }
+        if (
+          candidate.pivotB.index === best.pivotB.index &&
+          candidate.pivotA.index > best.pivotA.index
+        ) {
+          best = candidate;
+        }
+      }
+    }
+    return best;
+  }
+
+  const supportLine = searchBest(pivotLows, 'support');
+  const resistanceLine = searchBest(pivotHighs, 'resistance');
+
+  if (supportLine && resistanceLine) {
+    return supportLine.pivotB.index >= resistanceLine.pivotB.index
+      ? supportLine.points
+      : resistanceLine.points;
+  }
+  if (supportLine) {
+    return supportLine.points;
+  }
+  if (resistanceLine) {
+    return resistanceLine.points;
+  }
+  return [];
 function linearRegression(values) {
   const n = values.length;
   if (n === 0) {
@@ -127,6 +260,7 @@ async function handleKlinesRequest(res, query) {
       close: parseFloat(item[4]),
       volume: parseFloat(item[5]),
     }));
+    const trendLine = findBestTrendLine(candles);
     const closes = candles.map((c) => c.close);
     const { slope, intercept } = linearRegression(closes);
     const trendLine = candles.length
@@ -138,7 +272,6 @@ async function handleKlinesRequest(res, query) {
           },
         ]
       : [];
-
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ candles, trendLine }));
   } catch (err) {
@@ -182,6 +315,31 @@ function serveStaticFile(res, filePath) {
   });
 }
 
+function resolveRequestPath(requestPath) {
+  const rawPath = requestPath || '/';
+  let pathname;
+  try {
+    pathname = decodeURIComponent(rawPath);
+  } catch (err) {
+    return { type: 'error', status: 400, message: 'Bad Request' };
+  }
+
+  const sanitized = path.normalize(pathname).replace(/^(\.{2}[\/])+/g, '');
+  let targetPath = path.join(PUBLIC_DIR, sanitized);
+
+  if (pathname === '/' || path.extname(sanitized) === '') {
+    targetPath = path.join(PUBLIC_DIR, 'index.html');
+  }
+
+  const resolvedPath = path.resolve(targetPath);
+
+  if (!resolvedPath.startsWith(PUBLIC_DIR)) {
+    return { type: 'error', status: 403, message: 'Forbidden' };
+  }
+
+  return { type: 'file', path: resolvedPath };
+}
+
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url, true);
 
@@ -195,6 +353,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  const resolved = resolveRequestPath(parsedUrl.pathname);
+
+  if (!resolved || resolved.type === 'error') {
+    const status = resolved?.status || 404;
+    const message = resolved?.message || 'Not Found';
+    res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(message);
+    return;
+  }
+
+  serveStaticFile(res, resolved.path);
   const pathname = decodeURIComponent(parsedUrl.pathname || '/');
   const sanitizedPath = path.normalize(pathname).replace(/^(\.{2}[\/])+/g, '');
   let targetPath = path.join(PUBLIC_DIR, sanitizedPath);
