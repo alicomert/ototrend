@@ -1,0 +1,14 @@
+{
+  "name": "ototrend",
+  "version": "1.0.0",
+  "description": "Binance canlı verisiyle otomatik trend çizgisi sunan örnek uygulama.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"No automated tests configured\""
+  },
+  "keywords": ["binance", "trend", "apexcharts"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
