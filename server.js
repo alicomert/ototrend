@@ -13,6 +13,7 @@ const SYMBOL_CACHE_TTL = 1000 * 60 * 15; // 15 minutes
 const PIVOT_WINDOW = 5;
 const LINE_TOLERANCE = 1e-6;
 
+
 function fetchJson(apiUrl) {
   return new Promise((resolve, reject) => {
     https
@@ -188,6 +189,30 @@ function findBestTrendLine(candles) {
     return resistanceLine.points;
   }
   return [];
+function linearRegression(values) {
+  const n = values.length;
+  if (n === 0) {
+    return { slope: 0, intercept: 0 };
+  }
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  for (let i = 0; i < n; i += 1) {
+    const x = i;
+    const y = values[i];
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  }
+  const denominator = n * sumXX - sumX * sumX;
+  if (denominator === 0) {
+    return { slope: 0, intercept: values[0] || 0 };
+  }
+  const slope = (n * sumXY - sumX * sumY) / denominator;
+  const intercept = (sumY - slope * sumX) / n;
+  return { slope, intercept };
 }
 
 async function handleSymbolsRequest(res, query) {
@@ -236,7 +261,17 @@ async function handleKlinesRequest(res, query) {
       volume: parseFloat(item[5]),
     }));
     const trendLine = findBestTrendLine(candles);
-
+    const closes = candles.map((c) => c.close);
+    const { slope, intercept } = linearRegression(closes);
+    const trendLine = candles.length
+      ? [
+          { x: candles[0].time, y: Number(intercept.toFixed(6)) },
+          {
+            x: candles[candles.length - 1].time,
+            y: Number((intercept + slope * (candles.length - 1)).toFixed(6)),
+          },
+        ]
+      : [];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ candles, trendLine }));
   } catch (err) {
@@ -329,6 +364,23 @@ const server = http.createServer((req, res) => {
   }
 
   serveStaticFile(res, resolved.path);
+  const pathname = decodeURIComponent(parsedUrl.pathname || '/');
+  const sanitizedPath = path.normalize(pathname).replace(/^(\.{2}[\/])+/g, '');
+  let targetPath = path.join(PUBLIC_DIR, sanitizedPath);
+
+  if (pathname === '/' || path.extname(sanitizedPath) === '') {
+    targetPath = path.join(PUBLIC_DIR, 'index.html');
+  }
+
+  const resolvedPath = path.resolve(targetPath);
+
+  if (!resolvedPath.startsWith(PUBLIC_DIR)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Forbidden');
+    return;
+  }
+
+  serveStaticFile(res, resolvedPath);
 });
 
 server.listen(PORT, () => {
