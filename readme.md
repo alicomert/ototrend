@@ -1,0 +1,1 @@
+Binance'den canlı api çekerek; apexchart kütüphanesini kullanıp otomatik trend çizen bir backend ve frontend oluştursun. Javascript ve HTML ile yazsın.. Coin arama, Timeframe seçme olsun.
